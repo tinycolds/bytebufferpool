@@ -17,6 +17,15 @@ const (
 	maxPercentile           = 0.95
 )
 
+var (
+	defaultMaxBufferSize uint64 = 1 << 16
+)
+
+// SetMaxBufferSize .
+func SetMaxBufferSize(size uint64) {
+	defaultMaxBufferSize = size
+}
+
 // Pool represents byte buffer pool.
 //
 // Distinct pools may be used for distinct types of byte buffers.
@@ -50,8 +59,12 @@ func (p *Pool) Get() *ByteBuffer {
 	if v != nil {
 		return v.(*ByteBuffer)
 	}
+	defaultSize := atomic.LoadUint64(&p.defaultSize)
+	if defaultMaxBufferSize > 0 && defaultSize > defaultMaxBufferSize {
+		defaultSize = defaultMaxBufferSize
+	}
 	return &ByteBuffer{
-		B: make([]byte, 0, atomic.LoadUint64(&p.defaultSize)),
+		B: make([]byte, 0, defaultSize),
 	}
 }
 
@@ -65,6 +78,12 @@ func Put(b *ByteBuffer) { defaultPool.Put(b) }
 //
 // The buffer mustn't be accessed after returning to the pool.
 func (p *Pool) Put(b *ByteBuffer) {
+	if defaultMaxBufferSize > 0 && uint64(cap(b.B)) > defaultMaxBufferSize {
+		b.B = make([]byte, 0, defaultMaxBufferSize)
+		b.Reset()
+		p.pool.Put(b)
+		return
+	}
 	idx := index(len(b.B))
 
 	if atomic.AddUint64(&p.calls[idx], 1) > calibrateCallsThreshold {
